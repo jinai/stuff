@@ -1,0 +1,14 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pyperclip = "*"
+peewee = "*"
+
+[dev-packages]
+py2exe = { version = "*", platform_system = "== 'Windows'" }
+
+[requires]
+python_version = "3.10"

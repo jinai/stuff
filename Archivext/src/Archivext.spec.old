@@ -1,0 +1,60 @@
+# -*- mode: python -*-
+
+from _meta import __appname__
+
+block_cipher = None
+
+added_files = [
+    ("data/img/archivext.ico", "data/img"),
+    ("data/img/eye.png", "data/img"),
+    ("data/img/eye2.png", "data/img"),
+    ("data/img/loading.gif", "data/img"),
+    ("data/img/success.gif", "data/img"),
+    ("data/img/fail.gif", "data/img"),
+    ("data/img/copy.png", "data/img"),
+    ("data/img/copy2.png", "data/img"),
+    ("data/img/info.png", "data/img")
+]
+
+a = Analysis(
+    ['Archivext.py'],
+    binaries=[],
+    datas=added_files,
+    hiddenimports=[],
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=[
+        'doctest', 'unittest', 'xml', 'xmlrpc', 'difflib', 'optparse',
+        'ftplib', 'optparse', 'pdb', 'pydoc', 'pyexpat', 'pywintypes',
+        'socketserver', 'win32api', 'win32con',
+        'netbios', 'netrc', 'pkgutil', 'plistlib', 'pprint',
+        'py_compile', 'runpy', 'win32wnet',
+        '_osx_support', '_strptime', 'getopt',
+        'getpass', 'operators',
+    ],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher
+)
+
+pyz = PYZ(
+    a.pure,
+    a.zipped_data,
+    cipher=block_cipher
+)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    name=__appname__,
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    runtime_tmpdir=None,
+    console=False,
+    icon="data/img/archivext.ico"
+)

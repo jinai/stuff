@@ -1,0 +1,9 @@
+.idea/
+bin/
+build/
+dist/
+icons/
+meta/
+src/archives/
+checklist.txt
+*.pyc

@@ -1,0 +1,15 @@
+v1.1 [07/09/2019]
+-----------------
+    - Recherche améliorée : possible de chercher par tags, par exemple "statut:modifié"
+      ou "respo:jinai" et de les combiner.
+    - Les archives sont maintenant stockées dans ~/Documents/Archivext avec les logs.
+    - Mise à jour automatique au démarrage du programme (concerne les archives et
+      le programme en lui-même).
+    - Téléchargement des archives uniquement si elles ont été mises à jour.
+    - Harmonisation de l'affichage des dates (même format/longueur).
+    - Modifications mineures de l'interface.
+
+
+v1.0 [17/02/2019]
+-----------------
+    - Version initiale.
