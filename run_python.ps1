@@ -5,22 +5,21 @@ param(
 )
 
 # ============================================
-# Logging helpers
+# Logging
 # ============================================
-$logPath = Join-Path $env:LOCALAPPDATA "PortablePython\log.txt"
+$basePath = Join-Path $env:LOCALAPPDATA 'PortablePython'
+$logPath  = Join-Path $basePath 'log.txt'
+
 function Write-Log {
     param([string]$Message)
-    $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    Add-Content -Encoding UTF8 -Path $logPath -Value "[$timestamp] $Message"
+    $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    Add-Content -Encoding UTF8 -Path $logPath -Value "[$ts] $Message"
 }
 
 function Write-Status {
     param([string]$Message, [ConsoleColor]$Color = 'Gray')
-
     Write-Log $Message
-    if (-not $Silent) {
-        Write-Host $Message -ForegroundColor $Color
-    }
+    if (-not $Silent) { Write-Host $Message -ForegroundColor $Color }
 }
 
 function Compute-SHA256 {
@@ -34,102 +33,165 @@ function Compute-SHA256 {
 }
 
 # ============================================
-# Version parsing — supports old + new schemes
+# Normalize archive filenames to Uppercase P
+# python3.12.1.tar.gz → Python3.12.1.tar.gz
+# ============================================
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
+
+$archivesRaw = Get-ChildItem $scriptRoot -Include 'python*.zip','python*.tar.gz','Python*.zip','Python*.tar.gz' -File
+
+foreach ($file in $archivesRaw) {
+    if ($file.Name -cmatch '^python') {
+        $newName = 'P' + $file.Name.Substring(1)
+        Rename-Item -Path $file.FullName -NewName $newName
+        Write-Status "Renamed $($file.Name) → $newName"
+    }
+}
+
+# Refresh listing after rename
+$archiveFiles = Get-ChildItem $scriptRoot -Include 'Python*.zip','Python*.tar.gz' -File
+
+if (-not $archiveFiles) {
+    Write-Error "No Python*.zip or Python*.tar.gz archives found."
+    exit 1
+}
+
+# ============================================
+# Version parsing — NEW + OLD SCHEMES
+# Supports:
+#   Python3.12(.patch).zip
+#   Python312(.patch).tar.gz
 # ============================================
 function Parse-PythonArchive {
     param([System.IO.FileInfo]$File)
 
     $name = $File.Name
 
-    # NEW style: python3.12(.patch)-(arch).tar.gz
-    if ($name -match '^python(\d+)\.(\d+)(?:\.(\d+))?(?:-(x64|arm64))?\.(tar\.gz|zip)$') {
-        $major  = [int]$matches[1]
-        $minor  = [int]$matches[2]
-        $patch  = if ($matches[3]) { [int]$matches[3] } else { 0 }
-        $arch   = if ($matches[4]) { $matches[4] } else { $env:PROCESSOR_ARCHITECTURE }
-        $format = $matches[5]
+    # NEW scheme: Python3.12(.patch).tar.gz
+    if ($name -imatch '^Python(\d+)\.(\d+)(?:\.(\d+))?\.(tar\.gz|zip)$') {
+        $major = [int]$matches[1]
+        $minor = [int]$matches[2]
+        $patch = if ($matches[3]) { [int]$matches[3] } else { 0 }
+        $format = $matches[4]
     }
-    # OLD style: python312(.patch)-(arch).zip
-    elseif ($name -match '^python(\d{1})(\d{2})(?:\.(\d+))?(?:-(x64|arm64))?\.(tar\.gz|zip)$') {
-        $major  = [int]$matches[1]
-        $minor  = [int]$matches[2]
-        $patch  = if ($matches[3]) { [int]$matches[3] } else { 0 }
-        $arch   = if ($matches[4]) { $matches[4] } else { $env:PROCESSOR_ARCHITECTURE }
-        $format = $matches[5]
+    # OLD scheme: Python312(.patch).zip
+    elseif ($name -imatch '^Python(\d{1})(\d{2})(?:\.(\d+))?\.(tar\.gz|zip)$') {
+        $major = [int]$matches[1]
+        $minor = [int]$matches[2]
+        $patch = if ($matches[3]) { [int]$matches[3] } else { 0 }
+        $format = $matches[4]
     }
-    else {
-        return $null
-    }
+    else { return $null }
 
-    # Normalize architecture into x64 or arm64
-    if ($arch -match 'AMD64|x86_64|x64') { $arch = 'x64' }
-    elseif ($arch -match 'ARM64|aarch64') { $arch = 'arm64' }
-
-    # Numeric sort key: major.minor.patch.arch
-    $archKey = if ($arch -eq 'x64') { 1 } else { 0 }
-    $sortKey = ($major * 1e8) + ($minor * 1e4) + ($patch * 10) + $archKey
+    $sortKey = ($major * 1e6) + ($minor * 1e3) + $patch
 
     return [PSCustomObject]@{
         FilePath      = $File.FullName
         FileName      = $File.Name
-        BaseName      = $File.BaseName
         Major         = $major
         Minor         = $minor
         Patch         = $patch
-        Arch          = $arch
         SortKey       = $sortKey
-        VersionString = "$major.$minor.$patch-$arch"
+        VersionString = "$major.$minor.$patch"
         Format        = $format
     }
 }
 
 # ============================================
-# Locate archives
+# Parse archives
 # ============================================
-$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
-
-$archiveFiles = Get-ChildItem $scriptRoot `
-    -Include 'python*.zip', 'python*.tar.gz' -File
-
-if (-not $archiveFiles) {
-    Write-Error "No python*.zip or python*.tar.gz archives found."
-    exit 1
-}
-
-# Parse versions
-$parsedArchives = foreach ($file in $archiveFiles) { Parse-PythonArchive $file }
+$parsedArchives = foreach ($f in $archiveFiles) { Parse-PythonArchive $f }
 $parsedArchives = $parsedArchives | Where-Object { $_ -ne $null }
 
 if (-not $parsedArchives) {
-    Write-Error "No valid Python version archives found."
+    Write-Error "No valid Python archives found."
     exit 1
 }
 
-# Choose newest version matching current architecture
-$archWanted = if ($env:PROCESSOR_ARCHITECTURE -match 'ARM64') { 'arm64' } else { 'x64' }
-
-$latest = $parsedArchives |
-    Where-Object { $_.Arch -eq $archWanted } |
-    Sort-Object SortKey -Descending |
-    Select-Object -First 1
-
-if (-not $latest) {
-    Write-Error "No archives found matching architecture $archWanted."
-    exit 1
+# ============================================
+# Per-project version pinning via .python-version
+# Searches current directory and parents
+# ============================================
+function Find-VersionFile {
+    $p = (Get-Location).Path
+    while ($p -ne [System.IO.Path]::GetPathRoot($p)) {
+        $vf = Join-Path $p ".python-version"
+        if (Test-Path $vf) { return $vf }
+        $p = Split-Path $p -Parent
+    }
+    return $null
 }
 
-$version = $latest.VersionString
+$versionFile = Find-VersionFile
+$requestedVersion = $null
+
+if ($versionFile) {
+    $requestedVersion = (Get-Content $versionFile).Trim()
+    Write-Status "Version pinned by .python-version → $requestedVersion"
+}
+
+# ============================================
+# Choose correct version:
+#   If pinned → find match
+#   Else → latest available
+# ============================================
+if ($requestedVersion) {
+
+    $parts = $requestedVersion.Split('.')
+
+    if ($parts.Length -eq 2) {
+        $reqMajor = [int]$parts[0]
+        $reqMinor = [int]$parts[1]
+
+        $matching = $parsedArchives |
+            Where-Object { $_.Major -eq $reqMajor -and $_.Minor -eq $reqMinor } |
+            Sort-Object Patch -Descending |
+            Select-Object -First 1
+
+        if (-not $matching) {
+            Write-Error "Requested version $requestedVersion not available."
+            exit 1
+        }
+
+        $latest = $matching
+    }
+    elseif ($parts.Length -eq 3) {
+        $reqMajor = [int]$parts[0]
+        $reqMinor = [int]$parts[1]
+        $reqPatch = [int]$parts[2]
+
+        $matching = $parsedArchives |
+            Where-Object { $_.VersionString -eq "$reqMajor.$reqMinor.$reqPatch" } |
+            Select-Object -First 1
+
+        if (-not $matching) {
+            Write-Error "Requested version $requestedVersion not available."
+            exit 1
+        }
+
+        $latest = $matching
+    }
+    else {
+        Write-Error ".python-version must contain either MAJOR.MINOR or MAJOR.MINOR.PATCH"
+        exit 1
+    }
+
+} else {
+    $latest = $parsedArchives | Sort-Object SortKey -Descending | Select-Object -First 1
+}
+
+$version     = $latest.VersionString
 $archivePath = $latest.FilePath
 
 # ============================================
-# Local AppData installation target
+# Installation folder (ALWAYS Uppercase Python)
 # ============================================
-$basePath = Join-Path $env:LOCALAPPDATA 'PortablePython'
-$destPath = Join-Path $basePath $version
-$pythonExe = Join-Path $destPath 'python.exe'
+$destFolderName = "Python$version"
+$destPath       = Join-Path $basePath $destFolderName
+$pythonExe      = Join-Path $destPath "python.exe"
 
 $currentVerFile = Join-Path $basePath 'current_version.txt'
-$lastKnownGood = Join-Path $basePath 'last_known_good.txt'
+$lastKnownGood  = Join-Path $basePath 'last_known_good.txt'
 
 # Ensure base folder exists
 if (-not (Test-Path $basePath)) {
@@ -137,55 +199,54 @@ if (-not (Test-Path $basePath)) {
 }
 
 # ============================================
-# SHA256 verification (GNU format)
+# SHA256 validation (GNU-style)
 # ============================================
 $shaFile = $archivePath + '.sha256'
 if (Test-Path $shaFile) {
-    Write-Status "[PortablePython] Validating SHA256..."
+    Write-Status "Validating SHA256..."
 
     $line = Get-Content $shaFile | Select-Object -First 1
     $expectedHash = ($line -split '\s+')[0]
     $actualHash = Compute-SHA256 $archivePath
 
     if ($actualHash -ne $expectedHash) {
-        Write-Error "SHA256 mismatch for $($latest.FileName)"
+        Write-Error "SHA256 mismatch!"
         exit 1
     }
 }
 
 # ============================================
-# Determine if extraction is needed
+# Should we extract?
 # ============================================
-$hasFolder = Test-Path $destPath
-$hasExe = Test-Path $pythonExe
-$installedVersion = if (Test-Path $currentVerFile) { (Get-Content $currentVerFile).Trim() } else { '' }
+$installed = if (Test-Path $currentVerFile) { (Get-Content $currentVerFile).Trim() } else { "" }
 
 $shouldExtract =
-    -not $hasFolder -or
-    -not $hasExe -or
-    ($installedVersion -ne $version)
+    -not (Test-Path $destPath) -or
+    -not (Test-Path $pythonExe) -or
+    ($installed -ne $version)
 
+# ============================================
+# Install or reuse
+# ============================================
 if ($shouldExtract) {
 
-    Write-Status "[PortablePython] Installing Python $version..." -Color Cyan
+    Write-Status "Installing Python $version..." -Color Cyan
 
-    # Save rollback state
-    if ($hasExe) {
-        Set-Content $lastKnownGood $installedVersion
-        Write-Status "Saved last known good version: $installedVersion"
+    if (Test-Path $pythonExe) {
+        Set-Content $lastKnownGood $installed
+        Write-Status "Saved last-known-good version: $installed"
     }
 
-    # Remove old installs if not side-by-side
     if (-not $SideBySide) {
-        $folders = Get-ChildItem -Directory $basePath |
-            Where-Object { $_.Name -ne $version -and $_.Name -ne 'PortablePython' }
-        foreach ($f in $folders) {
-            Write-Status "Removing older: $($f.Name)"
-            Remove-Item -Recurse -Force $f.FullName
+        $older = Get-ChildItem $basePath -Directory |
+            Where-Object { $_.Name -ne $destFolderName }
+        foreach ($o in $older) {
+            Write-Status "Removing old: $($o.Name)"
+            Remove-Item -Recurse -Force $o.FullName
         }
     }
 
-    if ($hasFolder) {
+    if (Test-Path $destPath) {
         Remove-Item -Recurse -Force $destPath
     }
 
@@ -194,17 +255,13 @@ if ($shouldExtract) {
 
     if (-not (Test-Path $pythonExe)) {
         Write-Error "Extraction failed — python.exe missing."
-        if (Test-Path $lastKnownGood) {
-            $rollback = Get-Content $lastKnownGood
-            Write-Status "Rolling back to $rollback..." -Color Yellow
-        }
         exit 1
     }
 
     Set-Content $currentVerFile $version -Encoding ASCII
     Write-Status "Python $version installed." -Color Green
-}
-else {
+
+} else {
     Write-Status "Using existing Python $version."
 }
 
