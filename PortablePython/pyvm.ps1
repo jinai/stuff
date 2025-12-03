@@ -201,7 +201,11 @@ function Find-Archives {
             Where-Object { $_.Name -imatch '^Python.*\.(zip|tar\.gz)$' -or $_.Name -imatch '^python.*\.(zip|tar\.gz)$' }
     }
 
-    foreach ($f in @($localFiles + $centralFiles)) {
+    # Coerce to arrays to avoid op_Addition errors
+    $localFiles   = @($localFiles)
+    $centralFiles = @($centralFiles)
+
+    foreach ($f in ($localFiles + $centralFiles)) {
 
         # Normalize python → Python
         if ($f.Name -cmatch '^python') {
